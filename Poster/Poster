@@ -1,0 +1,265 @@
+  Poster CTF
+
+**_What is rdbms?_**
+
+Depending on the EF Codd relational model, an RDBMS allows users to build, update, manage, and interact with a relational database, which stores data as a table.
+
+Today, several companies use relational databases instead of flat files or hierarchical databases to store business data. This is because a relational database can handle a wide range of data formats and process queries efficiently. In addition, it organizes data into tables that can be linked internally based on common data. This allows the user to easily retrieve one or more tables with a single query. On the other hand, a flat file stores data in a single table structure, making it less efficient and consuming more space and memory.
+
+Most commercially available RDBMSs currently use Structured Query Language (SQL)to access the database. RDBMS structures are most commonly used to  perform CRUD operations (create, read, update, and delete), which are critical to support consistent data management.
+  
+
+## 1.What is the rdbms installed on the server?
+
+## Initial Enumeration
+
+The first step was to scan the target machine using **Nmap** to identify open ports and services.
+
+From the scan results (page 2), I observed:
+
+- Port **5432** was open
+    
+- Service running: **PostgreSQL**
+    
+
+This tells us:
+
+- The target is running a **database service**
+    
+- PostgreSQL can often be **misconfigured or weakly secured**
+    
+
+PostgreSQL - Which we found from Nmap scan Results
+
+## 2. What port is the rdbms running on?
+
+5432
+
+## Why this matters
+
+PostgreSQL is an **RDBMS (Relational Database Management System)**, which stores data in tables and is accessed using SQL.
+
+If misconfigured:
+
+- Weak passwords → brute force possible
+    
+- Default credentials → easy access
+    
+- Misconfigured permissions → command execution
+    
+## 3. Metasploit contains a variety of modules that can be used to enumerate in multiple rdbms, making it easy to gather valuable information
+
+## 4.After starting Metasploit, search for an associated auxiliary module that allows us to enumerate user credentials. What is the full path of the modules (starting with auxiliary)?
+
+## Finding the Correct Metasploit Module
+
+Initially, I searched for:
+
+search rdbms
+
+But that didn’t give the correct module.
+
+Then I rechecked the Nmap output and realised:
+
+- The actual service is **PostgreSQL**
+    
+
+So instead I searched:
+
+search postgres
+
+This is an important learning:
+
+**Always search based on the actual service name, not generic terms**
+
+I searched rdbms as we are searching that module but the answer was wrong, Then when saw the Nmap scan again i realised postgresql is the service running so
+
+  
+## Brute Forcing Credentials
+
+I used the module:
+
+auxiliary/scanner/postgres/postgres_login
+
+This module tries:
+
+- Default usernames
+    
+- Weak passwords
+    
+
+we will be using 26 here
+
+  
+## 5.What are the credentials you found?
+
+example: user:password
+
+postgres:password
+
+This means:
+
+- The database is using **weak/default credentials**
+    
+- This is a **misconfiguration vulnerability**
+    
+
+## 6.What is the full path of the module that allows you to execute commands with the proper user credentials (starting with auxiliary)?
+
+auxiliary/admin/postgres/postgres_sql
+
+## Gaining Database Access
+
+After getting credentials, I used:
+
+auxiliary/admin/postgres/postgres_sql
+
+This allowed me to:
+
+- Connect to the database
+    
+- Execute SQL queries
+    
+
+From this, I retrieved:
+
+PostgreSQL version: 9.5.21
+
+Why important?
+
+- Helps identify **known vulnerabilities**
+    
+- Old versions = higher chance of exploitation
+    
+
+## 7.Based on the results of #6, what is the rdbms version installed on the server?
+
+9.5.21
+
+## 8.What is the full path of the module that allows for dumping user hashes (starting with auxiliary)?
+
+auxiliary/scanner/postgres/postgres_hashdump
+
+## Dumping User Hashes
+
+Next module used:
+
+auxiliary/scanner/postgres/postgres_hashdump
+
+Result:
+
+- **6 user hashes extracted**
+    
+This step is useful because:
+
+- Hashes can be cracked offline
+    
+- Can reveal more system credentials
+    
+
+## 9.How many user hashes does the module dump?
+
+6
+
+## 10.What is the full path of the module (starting with auxiliary) that allows an authenticated user to view files of their choosing on the server?
+
+auxiliary/admin/postgres/postgres_readfile
+
+  
+## Reading Files from the Server
+
+Module used:
+
+auxiliary/admin/postgres/postgres_readfile
+
+This is critical because:
+
+- It allows reading **sensitive files directly from the system**
+    
+## 11.What is the full path of the module that allows arbitrary command execution with the proper user credentials (starting with exploit)?
+
+exploit/multi/postgres/postgres_copy_from_program_cmd_exec
+
+## Command Execution (Full Compromise)
+
+Module used:
+
+exploit/multi/postgres/postgres_copy_from_program_cmd_exec
+
+This gave:
+
+- Remote command execution
+    
+- Reverse shell access
+    
+
+Then I stabilised the shell using:
+
+python3 -c "import pty;pty.spawn('/bin/bash')"
+
+Now I had:
+
+- Full system interaction (like SSH)
+    
+
+python3 -c "import pty;pty.spawn('/bin/bash')"
+
+## Post-Exploitation & Privilege Escalation
+
+### Step 1: Searching for sensitive files
+
+Navigated to:
+
+ls
+
+pwd
+
+cat /home/alison/user.txt
+
+cd /var/www/html/
+
+ls
+
+cat config.php
+
+<?php
+
+$dbhost = "127.0.0.1";
+
+$dbuname = "alison";
+
+$dbpass = "p4ssw0rdS3cur3!#";
+
+$dbname = "mysudopassword";
+
+This is a **hardcoded credential leak**
+
+### Step 2: Switching User
+
+Used:
+
+su alison
+
+Enter the password : p4ssw0rdS3cur3!#
+
+cd /home/alison/
+
+cat user.txt
+
+user.txt
+
+THM{postgresql_fa1l_conf1gurat1on}
+
+root.txt
+
+### Step 3: Root Privilege Escalation
+
+Checked sudo permissions:
+
+sudo -l
+
+Enter the password: p4ssw0rdS3cur3!#
+
+cat /root/root.txt
+
+THM{c0ngrats_for_read_the_f1le_w1th_credent1als}
