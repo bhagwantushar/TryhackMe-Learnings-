@@ -1,0 +1,279 @@
+# 🧠 CyberLens CTF Writeup (TryHackMe)
+
+---
+
+## 🎯 Challenge Overview
+
+* **Target IP:** 10.49.138.242 
+* **OS:** Windows
+* **Goal:** Gain user and administrator access
+
+---
+
+# 🔍 Step 1: Enumeration
+
+### 🔸 Nmap Scan
+
+Identified:
+
+* Port 80 → Apache Web Server
+* Port 135, 139, 445 → SMB services
+* Port 3389 → RDP
+* Port 5985 → WinRM 
+
+---
+
+👉 **Attacker Thinking:**
+
+* This is clearly a **Windows-based system**
+* Multiple remote services → multiple attack paths
+* Web server often easiest entry point
+
+---
+
+# 🌐 Step 2: Web Enumeration
+
+Used Gobuster and discovered:
+
+* Standard directories (`/images`, `/css`, etc.) 
+
+Visited main page:
+
+* CyberLens website
+
+---
+
+## 🔍 Key Discovery
+
+Found another service:
+
+👉 **Apache Tika Server (Port 61777)** 
+
+---
+
+👉 **Why this matters:**
+
+* Apache Tika processes files
+* Known to have **RCE vulnerabilities**
+
+---
+
+# 💀 Step 3: Vulnerability Identification
+
+Identified vulnerability:
+
+👉 **Apache Tika RCE (CVE-based exploit)**
+
+Used Metasploit module:
+
+```
+exploit/windows/http/apache_tika_jp2_jscript
+```
+
+ id="a9x3kd"
+
+---
+
+👉 **Attacker Thinking:**
+
+* Instead of manual exploitation
+* Used known exploit → faster compromise
+
+---
+
+# ⚙️ Step 4: Exploitation
+
+Configured:
+
+* RHOST → target IP
+* LHOST → attacker machine
+* LPORT → custom port
+
+Initial attempts failed due to:
+
+* Port conflicts (handler already in use)
+
+---
+
+👉 **Lesson:**
+
+* Always check:
+
+```
+address already in use
+```
+
+Fixed by changing port.
+
+---
+
+# 💻 Step 5: Initial Access
+
+Successfully obtained:
+
+👉 **Meterpreter session** 
+
+---
+
+### 🔸 System Info
+
+```
+whoami → cyberlens\cyberlens
+```
+
+ id="k3n9mz"
+
+---
+
+👉 **Insight:**
+
+* Low privilege user
+* Need privilege escalation
+
+---
+
+# 🔍 Step 6: Post Exploitation
+
+Enumerated:
+
+* Users directory
+* System files
+
+Located:
+
+```
+user.txt
+```
+
+ id="g2m7ha"
+
+---
+
+# 🔐 Step 7: Privilege Escalation
+
+Used Metasploit module:
+
+```
+exploit/windows/local/msi_install_elevated
+```
+
+ id="z4t8pl"
+
+---
+
+👉 **Why this works:**
+
+* Windows misconfiguration:
+
+  * AlwaysInstallElevated enabled
+
+👉 **Impact:**
+
+* Any MSI → executed as SYSTEM
+
+---
+
+# 💀 Step 8: SYSTEM Access
+
+Gained second Meterpreter session:
+
+👉 **Privilege Level: SYSTEM** 
+
+---
+
+# 🔓 Step 9: Administrator Access
+
+Navigated to:
+
+```
+C:\Users\Administrator\Desktop\admin.txt
+```
+
+ id="v6r2qm"
+
+---
+
+Retrieved flag:
+
+```
+THM{3lev@t3D-4-pr1v35c!}
+```
+
+ id="y9d3pl"
+
+---
+
+# 🚨 Key Learnings
+
+## 🔑 1. Always Look for Additional Services
+
+* Apache Tika was the entry point
+* Not visible from main website
+
+---
+
+## 🔑 2. Known Vulnerabilities = Easy Entry
+
+* CVE exploitation can give instant access
+
+---
+
+## 🔑 3. Metasploit is Powerful (but must understand it)
+
+* Not just running modules
+* Need to debug issues (ports, handlers)
+
+---
+
+## 🔑 4. Windows Privilege Escalation is Configuration-Based
+
+* AlwaysInstallElevated → dangerous misconfiguration
+
+---
+
+## 🔑 5. Multi-stage Attacks Win
+
+* Web → Exploit → Shell → Privesc → SYSTEM
+
+---
+
+# 🧠 Personal Reflection
+
+This challenge helped me understand:
+
+* Real-world attacks often rely on:
+
+  * outdated services
+  * known vulnerabilities
+* Exploitation is not enough → post-exploitation is critical
+
+I also improved:
+
+* Metasploit usage
+* Windows enumeration
+* Privilege escalation techniques
+
+---
+
+# 🛠️ Tools Used
+
+* Nmap
+* Gobuster
+* Metasploit
+* Meterpreter
+
+---
+
+# 🏁 Conclusion
+
+Attack chain:
+
+1. Enumeration
+2. Service discovery (Apache Tika)
+3. RCE exploitation
+4. Meterpreter shell
+5. Privilege escalation
+6. SYSTEM compromise
+
+👉 This challenge shows:
+**Real-world hacking = exploiting known vulnerabilities + misconfigurations**
