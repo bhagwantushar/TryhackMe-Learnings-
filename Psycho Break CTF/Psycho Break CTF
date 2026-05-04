@@ -1,0 +1,329 @@
+# 🧠 Psycho Break CTF Writeup (TryHackMe)
+
+---
+
+## 🎯 Challenge Overview
+
+* **Target IP:** 10.49.131.92 
+* **Goal:** Gain root access
+* **Difficulty:** Medium (Multi-stage + Logic-based)
+
+---
+
+# 🔍 Step 1: Initial Exploration
+
+The challenge starts with navigating through themed rooms:
+
+* Sadist Room
+* Locker Room
+
+During exploration, found encoded message:
+
+```
+Grant_me_access_to_the_map_please
+```
+
+
+
+👉 **Attacker Thinking:**
+
+* This is clearly a **key/phrase for further access**
+* CTFs often hide progression keys in encoded form
+
+---
+
+# 🗝️ Step 2: Key Discovery
+
+At **St. Augustine Lighthouse**, obtained:
+
+```
+48ee41458eb0b43bf82b986cecf3af01
+```
+
+
+
+👉 **Insight:**
+
+* Likely a hash/token used for authentication or navigation
+* Indicates **multi-stage puzzle flow**
+
+---
+
+# 🌐 Step 3: Source Code Analysis
+
+Navigated to **Abandoned Room**.
+
+In page source found:
+
+```
+herecomeslara.php?shell=ls
+```
+
+
+
+👉 **Critical Observation:**
+
+* `shell=ls` → Command execution parameter
+
+👉 **Attacker Thinking:**
+
+* This is a **Command Injection / RCE vector**
+
+---
+
+# 📂 Step 4: Hidden Directory Discovery
+
+Discovered:
+
+```
+/abandonedRoom/680e89809965ec41e64dc7e447f175ab/
+```
+
+
+
+Downloaded:
+
+```
+helpme.zip
+```
+
+---
+
+# 🔐 Step 5: Steganography
+
+Inside extracted files:
+
+* `Joseph_oda.jpg`
+
+Used steghide:
+
+```
+steghide extract -sf Joseph_oda.jpg
+```
+
+Found hidden file:
+
+```
+thankyou.txt
+```
+
+
+
+---
+
+## 🔑 Hidden Instruction
+
+```
+write SHOWME to get the thankyou.txt file
+```
+
+
+
+👉 **Insight:**
+
+* Indicates hidden interaction or password mechanism
+* Classic stego-based hint system
+
+---
+
+# 📡 Step 6: FTP Access
+
+Connected to FTP server.
+
+Found:
+
+* `program`
+* `random.dic` 
+
+---
+
+# 🧠 Step 7: Reverse Engineering Logic
+
+The `program` binary:
+
+* Takes input
+* Returns “Incorrect” or success
+
+Used dictionary attack:
+
+👉 Cleaned wordlist:
+
+```
+tr -d '\r' random.dic > clean.dic
+```
+
+---
+
+## 🔸 Brute Force Approach
+
+Automated testing:
+
+* Loop through wordlist
+* Check output
+
+👉 **Attacker Thinking:**
+
+* Instead of guessing → automated testing
+* Treat binary as **black-box authentication system**
+
+---
+
+# 👤 Step 8: User Access
+
+Successfully found correct key → gained user-level access.
+
+---
+
+# 🔍 Step 9: Privilege Escalation Enumeration
+
+Observed:
+
+> A file in `/home/kidman` keeps changing every few minutes 
+
+👉 **Key Insight:**
+
+* This behavior suggests:
+
+  * Cron job execution
+
+---
+
+# ⚙️ Step 10: Cron Job Exploitation
+
+Checked:
+
+```
+/etc/crontab
+```
+
+Found:
+
+* Python script executed every 2 minutes as ROOT:
+
+```
+/var/.the_eye_of_ruvik.py
+```
+
+
+
+---
+
+## 🚨 Vulnerability
+
+* Script is **world-writable**
+* Runs as **root**
+
+👉 **Impact:**
+
+* Arbitrary code execution as root
+
+---
+
+# 💀 Step 11: Reverse Shell Injection
+
+Replaced script content with reverse shell.
+
+Waited for cron execution → got root shell.
+
+👉 **Attacker Thinking:**
+
+* No need for exploits
+* Abuse **misconfiguration**
+
+---
+
+# 🔓 Step 12: Root Access
+
+Retrieved:
+
+```
+/root/root.txt
+```
+
+```
+BA33BDF5B8A3BFC431322F7D13F3361E
+```
+
+
+
+---
+
+# 🚨 Key Learnings
+
+## 🔑 1. Multi-layered Challenges
+
+* Encoding → Stego → FTP → Binary → Cron
+* Real-world attacks often combine techniques
+
+---
+
+## 🔑 2. Source Code is Gold
+
+* Found command injection via:
+
+```
+shell=ls
+```
+
+---
+
+## 🔑 3. Steganography Matters
+
+* Hidden data inside images is common in CTFs
+
+---
+
+## 🔑 4. Automation > Manual Effort
+
+* Used scripting to brute force efficiently
+
+---
+
+## 🔑 5. Cron Jobs = Privilege Escalation Goldmine
+
+* Misconfigured cron jobs can give **instant root**
+
+---
+
+# 🧠 Personal Reflection
+
+This challenge helped me understand:
+
+* Not every vulnerability needs an exploit
+* Many real-world systems fail due to:
+
+  * poor permissions
+  * automation misconfigurations
+
+I also improved my:
+
+* problem-solving flow
+* ability to chain multiple attack vectors
+* patience in multi-stage challenges
+
+---
+
+# 🛠️ Tools Used
+
+* Steghide
+* FTP
+* Bash scripting
+* Python
+* Linux enumeration tools
+
+---
+
+# 🏁 Conclusion
+
+This challenge demonstrated a **complete attack chain**:
+
+1. Hidden key discovery
+2. Command injection
+3. File extraction & steganography
+4. FTP enumeration
+5. Binary brute forcing
+6. Cron job exploitation
+7. Root compromise
+
+👉 Reinforces that:
+**Real hacking = chaining small weaknesses together**
