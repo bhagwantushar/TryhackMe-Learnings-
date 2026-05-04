@@ -1,0 +1,248 @@
+# 🌐 RootMe CTF Writeup (TryHackMe)
+
+---
+
+## 🎯 Challenge Overview
+
+* **Target IP:** 10.49.136.178 
+* **Open Ports:** 22 (SSH), 80 (HTTP)
+* **Goal:** Gain root access
+
+---
+
+# 🔍 Step 1: Enumeration
+
+### 🔸 Nmap Scan
+
+Discovered:
+
+* SSH → OpenSSH 8.2
+* HTTP → Apache 2.4.41 
+
+👉 **Attacker Thinking:**
+
+* Web server is primary attack surface
+* SSH might be useful after gaining credentials
+
+---
+
+# 🌐 Step 2: Directory Enumeration
+
+Used Gobuster and found:
+
+```
+/panel/
+/uploads/
+```
+
+ id="j8g3lp"
+
+---
+
+👉 **Why this matters:**
+
+* `/panel/` → file upload functionality
+* `/uploads/` → where files might be stored
+
+This hints at:
+👉 **File Upload Vulnerability**
+
+---
+
+# 📤 Step 3: File Upload Exploitation
+
+Navigated to `/panel/`:
+
+* Found upload form
+* Tried uploading `.php` file → ❌ blocked
+
+Error:
+
+```
+PHP not allowed
+```
+
+ id="c0x9rz"
+
+---
+
+## 🔓 Bypass Technique
+
+Renamed file:
+
+```
+php_reverse_shell.php → php_reverse_shell.phtml
+```
+
+ id="k3p2dm"
+
+👉 **Why this works:**
+
+* Server blocks `.php` extension
+* But `.phtml` is still executed as PHP
+
+👉 **Real-world lesson:**
+
+* File extension filtering is **weak security control**
+
+---
+
+# 💻 Step 4: Reverse Shell
+
+Uploaded `.phtml` shell successfully.
+
+Triggered shell from `/uploads/`.
+
+Received reverse shell connection.
+
+---
+
+👉 **Attacker Thinking:**
+
+* Upload → Execute → Gain foothold
+* Classic web exploitation chain
+
+---
+
+# 👤 Step 5: User Access
+
+Stabilized shell.
+
+Navigated system and found:
+
+```
+/var/www/user.txt
+```
+
+ id="2vxz8q"
+
+---
+
+# 🔍 Step 6: Privilege Escalation Enumeration
+
+Ran:
+
+```bash
+find / -perm -4000 -type f 2>/dev/null
+```
+
+ id="l5vn3u"
+
+---
+
+👉 **Purpose:**
+
+* Identify SUID binaries with elevated privileges
+
+---
+
+# ⚙️ Step 7: Privilege Escalation
+
+Used Python to spawn privileged shell:
+
+```bash
+python -c 'import os; os.execl("/bin/sh", "sh", "-p")'
+```
+
+ id="h0h9ts"
+
+---
+
+👉 **Why this works:**
+
+* `-p` preserves privileges
+* Exploits misconfigured SUID permissions
+
+---
+
+# 🔓 Step 8: Root Access
+
+Located root flag:
+
+```
+/root/root.txt
+```
+
+ id="m9z7tn"
+
+---
+
+# 🚨 Key Learnings
+
+## 🔑 1. File Upload Vulnerabilities are Dangerous
+
+* Improper validation → remote code execution
+
+---
+
+## 🔑 2. Extension Filtering is Not Enough
+
+```
+.php blocked ❌
+.phtml works ✅
+```
+
+---
+
+## 🔑 3. Web Shell = Initial Access
+
+* Once inside → system-level enumeration begins
+
+---
+
+## 🔑 4. SUID Misconfigurations Lead to Root
+
+* Always check:
+
+```bash
+find / -perm -4000
+```
+
+---
+
+## 🔑 5. Simple Techniques Work
+
+* No exploit needed
+* Just logic + understanding
+
+---
+
+# 🧠 Personal Reflection
+
+This challenge reinforced that:
+
+* Small misconfigurations can lead to full compromise
+* Security controls must be layered (not just extension filtering)
+* Understanding **how servers process files** is critical
+
+I also improved:
+
+* Web exploitation skills
+* File upload bypass techniques
+* Privilege escalation understanding
+
+---
+
+# 🛠️ Tools Used
+
+* Nmap
+* Gobuster
+* Netcat
+* Python
+* Linux enumeration
+
+---
+
+# 🏁 Conclusion
+
+Attack chain:
+
+1. Enumeration
+2. Directory discovery
+3. File upload vulnerability
+4. Reverse shell access
+5. SUID exploitation
+6. Root compromise
+
+👉 This challenge shows:
+**Real-world attacks are often simple but powerful when chained correctly**
