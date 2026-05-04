@@ -1,0 +1,308 @@
+# 🧩 Different CTF Writeup (TryHackMe)
+
+## 🎯 Challenge Overview
+
+* **Target IP:** 10.49.176.160 
+* **Services Identified:** FTP (21), HTTP (80)
+* **Goal:** Gain user and root access
+
+---
+
+## 🔍 Step 1: Enumeration
+
+### 🔸 Nmap Scan
+
+Initial scan revealed:
+
+* FTP (vsftpd 3.0.3)
+* HTTP (Apache 2.4.29 - Ubuntu)
+* WordPress site detected 
+
+👉 **Attacker Thinking:**
+
+* WordPress = common attack surface
+* FTP = possible file upload/misconfiguration
+* Apache version = potential known vulnerabilities
+
+---
+
+## 🌐 Step 2: Web Enumeration
+
+### 🔸 Directory Bruteforcing
+
+Using Gobuster, discovered:
+
+* `/announcements`
+* `/phpmyadmin`
+* `/wp-admin`, `/wp-content`, `/wp-includes` 
+
+👉 **Why this matters:**
+
+* `/phpmyadmin` → database access
+* `/announcements` → possible sensitive files
+* WordPress directories → plugin/theme exploitation
+
+---
+
+## 🌍 Step 3: Virtual Host Discovery
+
+While analyzing the site, found a reference to:
+
+```
+adana.thm
+```
+
+Added it to `/etc/hosts`:
+
+```
+10.49.176.160 adana.thm
+```
+
+👉 **Insight:**
+
+* Many CTFs use hidden virtual hosts
+* Without adding this, you miss attack surface
+
+---
+
+## 📂 Step 4: Sensitive File Discovery
+
+Inside `/announcements`, found:
+
+* wordlists
+* configuration-related files 
+
+---
+
+## 🔐 Step 5: Credential Discovery
+
+Found credentials:
+
+```
+phpmyadmin : 12345
+```
+
+
+
+👉 **Why this worked:**
+
+* Weak/default credentials
+* Likely stored insecurely in config files
+
+👉 **Real-world lesson:**
+
+* Hardcoded credentials are a **critical vulnerability**
+
+---
+
+## 🛠️ Step 6: Accessing phpMyAdmin
+
+Logged into phpMyAdmin using discovered credentials.
+
+👉 **What this gives attacker:**
+
+* Full database access
+* Ability to:
+
+  * Extract user passwords
+  * Modify data
+  * Potentially gain shell via SQL tricks
+
+---
+
+## 📤 Step 7: File Transfer via FTP
+
+Uploaded:
+
+* `sucrack` tool
+* `wordlist.txt` 
+
+Moved files into `/tmp` for execution.
+
+👉 **Insight:**
+
+* FTP allowed file upload → misconfiguration
+* `/tmp` is commonly writable → good for exploitation
+
+---
+
+## ⚙️ Step 8: Privilege Escalation (User)
+
+### 🔸 Observations
+
+Noticed pattern:
+
+```
+123adana
+```
+
+Created new wordlist:
+
+```bash
+sed 's/^/123adana/' wordlist.txt > wordlist2.txt
+```
+
+👉 **Attacker Thinking:**
+
+* Instead of brute forcing blindly
+* Used pattern recognition from existing data
+
+---
+
+### 🔸 Using sucrack
+
+Ran:
+
+```
+sucrack -u hakanbey -w 100 wordlist2.txt
+```
+
+Successfully obtained user access.
+
+---
+
+## 🧑‍💻 Step 9: User Flag
+
+Navigated to:
+
+```
+/home/hakanbey
+```
+
+Retrieved:
+
+```
+user.txt
+```
+
+
+
+---
+
+## 🔍 Step 10: Privilege Escalation (Root)
+
+### 🔸 SUID Enumeration
+
+Used:
+
+```bash
+find / -perm -4000 -type f 2>/dev/null
+```
+
+
+
+👉 **Purpose:**
+
+* Find binaries with elevated privileges
+
+---
+
+### 🔸 Binary Analysis
+
+Identified vulnerable binary:
+
+```
+/usr/bin/binary
+```
+
+Used `ltrace` to analyze behavior and determine required input.
+
+👉 **Insight:**
+
+* Instead of guessing → analyzed program logic
+
+---
+
+## 🔓 Step 11: Root Access
+
+Executed binary with correct input → gained root.
+
+Retrieved:
+
+```
+/root/root.txt
+```
+
+
+
+---
+
+# 🚨 Key Learnings
+
+### 🔑 1. Enumeration is Everything
+
+Every step (Nmap → Gobuster → vhost) revealed new attack paths.
+
+---
+
+### 🔑 2. Weak Credentials = Easy Entry
+
+```
+phpmyadmin : 12345
+```
+
+A very common real-world issue.
+
+---
+
+### 🔑 3. Think, Don’t Just Use Tools
+
+Instead of random brute force:
+
+* Observed pattern → `123adana`
+* Built smarter wordlist
+
+---
+
+### 🔑 4. Misconfigurations Matter
+
+* FTP allowed uploads
+* phpMyAdmin exposed
+* Sensitive files accessible
+
+---
+
+### 🔑 5. Privilege Escalation = Logic
+
+* Used SUID + binary analysis
+* Not just “run script and pray”
+
+---
+
+# 🧠 Personal Reflection
+
+Earlier, I used to:
+
+* Run tools blindly
+* Depend on walkthroughs
+
+In this challenge, I learned:
+
+* Patterns matter more than tools
+* Small hints (like prefixes) can break the system
+* Thinking like an attacker is more important than commands
+
+---
+
+# 🛠️ Tools Used
+
+* Nmap
+* Gobuster
+* FTP
+* phpMyAdmin
+* sucrack
+* ltrace
+
+---
+
+# 🏁 Conclusion
+
+This challenge demonstrated a full attack chain:
+
+1. Enumeration
+2. Credential discovery
+3. Initial access
+4. Privilege escalation
+5. Root compromise
+
+👉 It reinforced that **real hacking is about thinking, not just tools.**
